@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Husballs - Husband Made Madness For His Gorgeous Wife</title>
+    <script>
+        var playArea = null;
+        var baseSpaceRockRadius = 16;
+        var baseSpaceRockSpeed = 8;
+        var baseFleetCraftSize = 8;
+        var baseFleetSpeed = 1;
+        var baseFleetRotateTime = 50;
+        const DEG2RADRATIO = 180.0 / Math.PI;
+
+        function degreesToRadians(degrees) {
+            if (isNaN(degrees)) degrees = 0;
+            degrees -= 90.0;
+            if (degrees < 0) {
+                degrees = 360 + (degrees % 360);
+            } else if (degrees > 360) {
+                degrees = degrees % 360;
+            }
+            return degrees / DEG2RADRATIO;
+        }
+
+        class PlayArea {
+            constructor(canvasElementId, gameStartAreaHeightAsRatio = 0.125) {
+                if (!canvasElementId instanceof String || typeof canvasElementId !== "string") throw "Invalid canvas element id";
+                if (!document.getElementById(canvasElementId) instanceof HTMLCanvasElement) throw "Invalid canvas reference";
+                if (isNaN(gameStartAreaHeightAsRatio) || gameStartAreaHeightAsRatio < 0 || gameStartAreaHeightAsRatio > 1) throw "Invalid start area";
+                this.canvas = document.getElementById(canvasElementId);
+                this.canvas.playArea = this;
+                this.ctx = this.canvas.getContext("2d");
+                this.gameStartAreaHeight = this.canvas.height * gameStartAreaHeightAsRatio;
+                this.gameStarted = false;
+                this.oldMouseY = 0;
+
+                this.playerShield = new PlayerShield(this);
+
+                this.spaceRocks = [];
+                for (var i = 0; i < 10; i++) {
+                    this.spaceRocks[i] = new SpaceRock(this);
+                }
+
+                this.spaceFleet = [];
+                const leftMostShipEdge = this.playerShield.x - (this.playerShield.arcRadius - 80);
+                const rightMostShipEdge = this.canvas.width - 40;
+                var y = this.canvas.height / 2 - (baseFleetCraftSize * 5);
+                var craft = 0;
+                for (var j = 0; j < 3; j++) {
+                    var x = leftMostShipEdge + ((baseFleetCraftSize * 4.5) * (1 - (j % 2)));
+                    while (x < rightMostShipEdge) {
+                        this.spaceFleet[craft++] = new FleetCraft(this, x, y);
+                        x += baseFleetCraftSize * 9;
+                    }
+                    y += baseFleetCraftSize * 5;
+                }
+
+                this.canvas.onmousemove = function(e) {
+                    var mouseY = e.pageY - this.getBoundingClientRect().y;
+                    if (!this.playArea.gameStarted) {
+                        this.playArea.checkGameStartTrigger(e);
+                    } else {
+                        const halfCanvasHeight = this.height / 2.0;
+                        var centreRatio = (mouseY - halfCanvasHeight) / halfCanvasHeight;
+                        this.playArea.playerShield.setTargetAngle(centreRatio);
+                    }
+                    this.playArea.oldMouseY = mouseY;
+                }
+            }
+
+            checkGameStartTrigger(event) {
+                if (event instanceof MouseEvent) {
+                    const gameStartAreaTop = (this.canvas.height - this.gameStartAreaHeight) / 2.0;
+                    const gameStartAreaBottom = gameStartAreaTop + this.gameStartAreaHeight;
+                    if (event.pageY > gameStartAreaTop && event.pageY < gameStartAreaBottom) this.gameStarted = true;
+                }
+            }
+
+            get width() {
+                return this.canvas.width;
+            }
+
+            get height() {
+                return this.canvas.height;
+            }
+
+            paint() {
+                if (this.gameStarted) {
+                    this.ctx.fillStyle="white";
+                    this.ctx.fillRect(0, 0, this.width, this.height);
+                    this.playerShield.paint();
+                    for (var i = 0; i < this.spaceRocks.length; i++) {
+                        this.spaceRocks[i].paint();
+                    }
+                    for (var i = 0; i < this.spaceFleet.length; i++) {
+                        this.spaceFleet[i].paint();
+                    }
+                }
+            }
+
+            update() {
+                if (this.gameStarted) {
+                    this.playerShield.move();
+                    this.playerShield.checkForCollisions();
+                    for (var i = 0; i < this.spaceRocks.length; i++) {
+                        this.spaceRocks[i].move();
+                    }
+                    for (var i = 0; i < this.spaceFleet.length; i++) {
+                        this.spaceFleet[i].move();
+                    }
+                }
+                this.paint();
+            }
+        }
+
+        class PlayerShield {
+            constructor(playArea, rightEdgeOffsetPixels = 360, arcRadius = 240, lengthInDegrees = 40) {
+                if (!playArea instanceof PlayArea) throw "Invalid PlayArea object";
+                if (isNaN(arcRadius) || arcRadius < 100 || arcRadius > 400) throw "Invalid shield arc radius (" + arcRadius + ")";
+                if (isNaN(rightEdgeOffsetPixels)) throw "Invalid x-axis offset ratio for shield (" + rightEdgeOffsetPixels + ")";
+                if (isNaN(lengthInDegrees) || lengthInDegrees < 20) throw "Invalid arc length (" + lengthInDegrees + ")";
+                this.playArea = playArea;
+                this.x = playArea.width + (arcRadius - rightEdgeOffsetPixels);
+                this.y = playArea.height / 2;
+                this.arcRadius = arcRadius;
+                const halfLengthInDegrees = lengthInDegrees / 2.0;
+                this.bottomAngleDegrees = 180 + (90 - halfLengthInDegrees);
+                this.lengthInDegrees = lengthInDegrees;
+                this.momentumInDegrees = this.normalMomentumInDegrees = 5;
+                this.targetBottomAngleDegrees = this.bottomAngleDegrees;
+            }  
+
+            move() {
+                if (this.bottomAngleDegrees < this.targetBottomAngleDegrees) {
+                    this.bottomAngleDegrees += this.momentumInDegrees;
+                    if (this.bottomAngleDegrees > this.targetBottomAngleDegrees) this.bottomAngleDegrees = this.targetBottomAngleDegrees;
+                }
+
+                if (this.bottomAngleDegrees > this.targetBottomAngleDegrees) {
+                    this.bottomAngleDegrees -= this.momentumInDegrees;
+                    if (this.bottomAngleDegrees < this.targetBottomAngleDegrees) this.bottomAngleDegrees = this.targetBottomAngleDegrees;
+                }
+            }
+
+            paint() {
+                var ctx = this.playArea.ctx;
+                ctx.strokeStyle = "black";
+                ctx.lineWidth = 24;
+                ctx.lineCap = "round";
+                ctx.beginPath();
+                ctx.arc(this.x, 
+                        this.y, 
+                        this.arcRadius, 
+                        degreesToRadians(this.bottomAngleDegrees), 
+                        degreesToRadians(this.bottomAngleDegrees + this.lengthInDegrees));
+                ctx.stroke();
+            }
+
+            setTargetAngle(distanceFromCenter) {
+                if (!isNaN(distanceFromCenter)) {
+                    const halfLengthInDegrees = this.lengthInDegrees / 2.0;
+                    this.targetBottomAngleDegrees = (270 - halfLengthInDegrees) - ((90 - halfLengthInDegrees) * distanceFromCenter);
+                }
+            }
+
+            checkForCollisions() {
+                var totalCollisions = 0;
+                var totalOfCollisionAngles = 0;
+                var ctx = this.playArea.ctx;
+                
+                for (var i = this.bottomAngleDegrees; i < this.bottomAngleDegrees + this.lengthInDegrees; i += 1) {
+                    const shieldPointVector = new Vector(0, this.arcRadius + 6).rotate(i - 90);
+                    const shieldPointX = this.x + shieldPointVector.xoffset;
+                    const shieldPointY = this.y + shieldPointVector.yoffset;
+                    
+                    for (var sri = 0; sri < this.playArea.spaceRocks.length; sri++) {
+                        var spaceRock = this.playArea.spaceRocks[sri];
+                        if (spaceRock != null && !spaceRock.playerHit) {
+                            if (shieldPointX > spaceRock.x - spaceRock.radius && shieldPointX < spaceRock.x + spaceRock.radius &&
+                                shieldPointY > spaceRock.y - spaceRock.radius && shieldPointY < spaceRock.y + spaceRock.radius) {
+                                totalCollisions++;
+                                totalOfCollisionAngles += i;
+                                spaceRock.playerHit = true;
+                                spaceRock.xspeed = -spaceRock.xspeed;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        class Vector {
+            constructor(xoffset, yoffset) {
+                if (isNaN(xoffset) || isNaN(yoffset)) throw "Invalid vector (" + xoffset + ", " + yoffset + ")";
+                this.xoffset = xoffset;
+                this.yoffset = yoffset;
+            }
+
+            rotate(degrees) {
+                const radians = degreesToRadians(degrees);
+                const new_xoffset = Math.floor((this.xoffset * Math.cos(radians)) - (this.yoffset * Math.sin(radians)));
+                const new_yoffset = Math.floor((this.xoffset * Math.sin(radians)) + (this.yoffset * Math.cos(radians)));
+                return new Vector(new_xoffset, new_yoffset);
+            }
+        }
+
+        class SpaceRock {
+            constructor(playArea) {
+                if (!playArea instanceof PlayArea) throw "Invalid play area.";
+                this.playArea = playArea;
+                this.reinit();
+            }
+
+            move() {
+                if (this.playArea.gameStarted) {
+                    this.x += this.xspeed;
+                    this.y += this.yspeed;
+                    this.rotationAngle += this.rotationSpeedDegrees;
+                    if (this.rotationAngle > 360) {
+                        this.rotationAngle -= 360;
+                    }
+                    if (this.rotationAngle < 0) {
+                        this.rotationAngle += 360;
+                    }
+                    if (this.y < 0 - this.radius || this.y > this.playArea.height + this.radius) {
+                        if (!this.playerHit) {
+                            this.yspeed = -this.yspeed;
+                        } else {
+                            this.reinit();
+                        }
+                    }
+                    if (this.x + this.radius < 0 && this.playerHit) {
+                        this.reinit();
+                    }
+                    if (this.x > this.playArea.width + (this.radius * 8)) {
+                        const radius = this.baseRadius * (1 + Math.floor(Math.random() * 4));
+                        const xspeed = 4 + (Math.floor(Math.random() * 4));
+                        const yspeed = -8 + (Math.floor(Math.random() * 16));
+                        this.reinit(radius, xspeed, yspeed);
+                    }
+                }
+            }
+
+            paint() {
+                var ctx = this.playArea.ctx;
+                ctx.fillStyle = "black";
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                var zeroVectorHits = 0;
+                var vector = 0;
+                while (zeroVectorHits < 2) {
+                    const rotatedVector = this.vectors[vector].rotate(this.rotationAngle);
+                    if (vector == 0) {
+                        if (zeroVectorHits == 0) {
+                            ctx.moveTo(this.x + rotatedVector.xoffset, this.y + rotatedVector.yoffset);
+                        } else {
+                            ctx.lineTo(this.x + rotatedVector.xoffset, this.y + rotatedVector.yoffset);
+                        }
+                        zeroVectorHits++;
+                    } else {
+                        ctx.lineTo(this.x + rotatedVector.xoffset, this.y + rotatedVector.yoffset);
+                    }
+                    vector = (vector + 1) % this.vectors.length;
+                }
+                ctx.fill();
+            }
+
+            reinit() {
+                this.radius = baseSpaceRockRadius * (1 + Math.floor(Math.random() * 4));
+                this.xspeed = 4 + (1 + (Math.floor(Math.random() * baseSpaceRockSpeed)));
+                this.yspeed = -baseSpaceRockSpeed + (Math.floor(Math.random() * (2 * baseSpaceRockSpeed)));
+                this.playerHit = false;
+                this.rotationSpeedDegrees = -2 + (Math.random() * 4);
+                this.rotationAngle = Math.floor(Math.random() * 360);
+                this.x = -this.radius * 8;
+                this.y = Math.floor((this.radius * 4) + (Math.random() * (this.playArea.height - (this.radius * 8))));
+
+                this.vectors = [];
+                var degrees = 0;
+                var edgeRadius = this.radius;
+                const edgeChangeRadius = this.radius / 16;
+                var vector = 0;
+                var diff = [1.0, 0.0, 0.0, -1.0];
+                while (degrees < 360) {
+                    var changeDir = -1 + Math.floor(Math.random() * 3);
+                    for (var i = 0; i < diff.length && degrees < 360; i++) {
+                        var radians = degreesToRadians(degrees);
+                        this.vectors[vector++] = new Vector(0, edgeRadius + Math.floor(edgeChangeRadius * diff[i])).rotate(degrees);
+                        degrees += 15;
+                    }
+                    edgeRadius += edgeChangeRadius * changeDir;
+                    if (edgeRadius < this.radius) {
+                        edgeRadius = this.radius;
+                    }
+                    if (edgeRadius > this.radius * 4) {
+                        edgeRadius = this.radius * 4;
+                    }
+                }
+            }
+        }
+
+        class FleetCraft {
+            constructor(playArea, xpos, ypos) {
+                if (!playArea instanceof PlayArea) throw "Invalid PlayArea object";
+                if (isNaN(xpos) || isNaN(ypos)) {
+                    throw "Invalid fleet craft co-ordinate (" + xpos + ", " + ypos + ")";
+                }
+                this.playArea = playArea;
+                this.x = xpos;
+                this.y = ypos;
+                this.horizontalMomentum = 0;
+                this.verticalMomentum = 0;
+                this.isHit = false;
+                this.hitsLeft = 2;
+                this.currentAngle = 0;
+                this.destinationAngle = 0;
+                this.originX = this.x;
+                this.originY = this.y;
+                this.rotateTime = baseFleetRotateTime * (3 + (Math.floor(Math.random() * 7)));
+                this.rotateState = 0;
+            }
+
+            paint() {
+                var ctx = this.playArea.ctx;
+                if (ctx != null && this.hitsLeft > 0) {
+                    // console.log("Painting fleet craft at " + this.x + ", " + this.y);
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = "black";
+                    ctx.fillStyle = "black";
+                    // Top edge of craft
+                    ctx.beginPath();
+                    ctx.moveTo(this.x - (baseFleetCraftSize * 3), this.y - baseFleetCraftSize);
+                    ctx.lineTo(this.x + (baseFleetCraftSize * 3), this.y - baseFleetCraftSize);
+                    ctx.stroke();
+                    // Right arc of craft.
+                    ctx.beginPath();
+                    ctx.arc(this.x + (baseFleetCraftSize * 3), this.y, baseFleetCraftSize, degreesToRadians(0), degreesToRadians(180));
+                    ctx.stroke();
+                     // Bottom edge of craft
+                    ctx.beginPath();
+                    ctx.moveTo(this.x - (baseFleetCraftSize * 3), this.y + baseFleetCraftSize);
+                    ctx.lineTo(this.x + (baseFleetCraftSize * 3), this.y + baseFleetCraftSize);
+                    ctx.stroke();
+                    // Left arc of craft.
+                    ctx.beginPath();
+                    ctx.arc(this.x - (baseFleetCraftSize * 3), this.y, baseFleetCraftSize, degreesToRadians(180), degreesToRadians(360));
+                    ctx.stroke();
+                    // Top arc of craft
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y - baseFleetCraftSize, baseFleetCraftSize * 2, degreesToRadians(270), degreesToRadians(90));
+                    ctx.stroke();
+                    // Alien head
+                    ctx.beginPath();
+                    ctx.arc(this.x - (baseFleetCraftSize / 4), this.y - baseFleetCraftSize, baseFleetCraftSize, degreesToRadians(270), degreesToRadians(90));
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(this.x + (baseFleetCraftSize / 2), this.y - (baseFleetCraftSize * 2.25), baseFleetCraftSize / 4, 0, 360);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.moveTo(this.x + (baseFleetCraftSize / 4), this.y - (baseFleetCraftSize * 2));
+                    ctx.lineTo(this.x + (baseFleetCraftSize / 2), this.y - (baseFleetCraftSize * 2.25));
+                    ctx.stroke();
+                }
+            }
+
+            move() {
+                switch (this.rotateState) {
+                    case 0 : {
+                        if (this.rotateTime > 0) {
+                            this.rotateTime--;
+                        } else {
+                            this.rotateState = 1;
+                            this.rotateAngle = 30 * (1 + (Math.floor(Math.random()  * 12)));
+                            this.rotateEndAngle = this.rotateAngle + (30 * (1 + (Math.floor(Math.random()  * 12))));
+                            this.rotateXRadius = 1 + (Math.floor(Math.random() * (baseFleetCraftSize / 2)));
+                            this.rotateYRadius = Math.floor(Math.random() * (baseFleetCraftSize / 2));
+                            const rads = degreesToRadians(this.rotateAngle);
+                            const xoffset = Math.floor((this.rotateXRadius * Math.cos(rads)) - (this.rotateYRadius * Math.sin(rads)));
+                            const yoffset = Math.floor((this.rotateXRadius * Math.sin(rads)) + (this.rotateYRadius * Math.cos(rads)));
+                            this.rotateStartX = this.originX + xoffset;
+                            this.rotateStartY = this.originY + yoffset;
+                        }
+                    } break;
+                    case 1 : {
+                        if (this.x < this.rotateStartX) {
+                            this.x++;
+                        } else if (this.x > this.rotateStartX) {
+                            this.x--;
+                        }
+                        if (this.y < this.rotateStartY) {
+                            this.y++;
+                        } else if (this.y > this.rotateStartY) {
+                            this.y--;
+                        }
+                        if (this.x == this.rotateStartX && this.y == this.rotateStartY) {
+                            this.rotateState = 2;
+                        }
+                    } break;
+                    case 2 : {
+                        const rads = degreesToRadians(this.rotateAngle);
+                        const xoffset = Math.floor((this.rotateXRadius * Math.cos(rads)) - (this.rotateYRadius * Math.sin(rads)));
+                        const yoffset = Math.floor((this.rotateXRadius * Math.sin(rads)) + (this.rotateYRadius * Math.cos(rads)));
+                        this.x = this.originX + xoffset;
+                        this.y = this.originY + yoffset;
+                        this.rotateAngle += 10;
+                        if (this.rotateAngle >= this.rotateEndAngle) {
+                            this.rotateState = 3;
+                        }
+                    } break;
+                    case 3 : {
+                        if (this.x < this.originX) {
+                            this.x++;
+                        } else if (this.x > this.originX) {
+                            this.x--;
+                        }
+                        if (this.y < this.originY) {
+                            this.y++;
+                        } else if (this.y > this.originY) {
+                            this.y--;
+                        }
+                        if (this.x == this.originX && this.y == this.originY) {
+                            this.rotateState = 0;
+                            this.rotateTime = baseFleetRotateTime * (3 + (Math.floor(Math.random() * 7)));
+                        }
+                    }
+                }
+            }
+        }
+
+        function update() {
+            playArea.update();
+        }
+
+        function initGame(canvasElementId) {
+            try {
+                playArea = new PlayArea(canvasElementId);
+                setInterval(update, 20);
+            } catch (err) {
+                console.log("We have a problem: " + err);
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #73B;
+        }
+        canvas#MainGameArea {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            border: 1px solid;
+            box-shadow: 8px 8px 2px rgba(0, 0, 0, 0.5);
+            background-color: white;
+        }
+    </style>
+    
+</head>
+<body onload="initGame('MainGameArea')">
+    <canvas id="MainGameArea" width="1366" height="768"/>
+</body>
+</html>
