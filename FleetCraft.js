@@ -64,7 +64,7 @@ class FleetCraft {
     }
 
     paint() {
-       this.craftPaintObject.translate(this.x, this.y).stroke(this.playArea);
+       this.craftPaintObject.translate(this.x, this.y).stroke(this.playArea, 2);
        this.alienPaintObject.translate(this.x - (baseFleetCraftSize / 4), this.y).fill(this.playArea);    
     }
 
